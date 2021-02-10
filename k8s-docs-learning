@@ -65,3 +65,310 @@ spec:
           items:
             - key: nginx.conf
               path: nginx.conf
+              
+              
+              
+              
+ Secrets
+ 
+ 
+ 
+ 												SECRETS												
+
+	Store sensitive data(small amount of data) in encrypted manner
+	like db data (passwords,tokens,ssh-keys)
+	Reduce risk of sensitive data 
+	created outside of pods 
+	Stored inside the etcd db on k8s master
+	not morethan 1MB
+	Used in 2 ways 1.volumes 2.env variables
+	sent only to target node(subset of nodes) not all nodes inside a cluster
+
+Creating secrets:
+1.manual    2.kubectl
+
+					manually creating secrets							
+1.encrypt the secrets
+2.provide data on yaml then create secrets.
+3.step by step
+
+
+
+					kubectl: (creating secrets using kubectl)				
+
+syntax:
+kubectl create secret [type][name][data] 
+
+type:
+====
+1.generic
+	file
+	directory
+	literal values
+2.docker-registry
+3.tls
+
+data:
+=====
+1.path to dir/file: --from-file               #absolute path of file
+2.key-value pair: --from-literal
+
+
+							CONSUME SECRETS IN 2 WAYS							
+1.Volumes
+2.Environment variables
+
+Creating secrets using kubectl
+2.kubectl
+
+vi username.txt
+mongodb_user
+
+vi password.txt
+pa$$wOOrd
+
+create secrets using 	kubectl
+
+	kubectl create secret generic vnd-redis-secret --from-file=username.txt --from-file=password.txt -n vnd
+
+(on most cases we used to create secrets using 			generic)
+
+Note:
+-n vnd    #(creating secret file in vnd namespace)
+
+How to check secrets:
+	kubectl get secret -n vnd
+vnd-mongo-secret      Opaque                                2      6m39s
+
+	kubectl describe secret vnd-redis-secret -n vnd
+Name:         vnd-mongo-secret
+Namespace:    vnd
+Labels:       <none>
+Annotations:  <none>
+
+Type:  Opaque
+
+Data
+====
+password.txt:  10 bytes          ##Max size of secret should be 1MB (here 23Bytes)
+username.txt:  13 bytes
+
+kubectl create secret generic vnd-redis-secret --from-file=username.txt --from-file=password.txt -n vnd
+
+================How to use this secret in yaml file=======================
+1.Conusming secrets using Volumes
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: nginx-deploy-configma
+ namespace: vnd
+spec:
+ replicas: 1
+ selector:
+  matchLabels:
+   app: blue
+ template:
+  metadata:
+   name: nginx-pod
+   labels:
+     app: blue
+  spec:
+   containers:
+    - name: nginx-containers
+      image: nginx
+      volumeMounts:
+      - name: test-vol
+        mountPath: "/etc/sensitivedata"
+        readOnly: true
+   volumes:
+    - name: test-vol
+      secret:
+       secretName: vnd-mongo-secret
+
+			
+kubectl exec -it nginx-deploy-configma-56b88d579-mrp5r -n vnd bash
+
+root@nginx-deploy-configma-56b88d579-mrp5r:/# cd /etc/sensitivedata
+
+root@nginx-deploy-configma-56b88d579-mrp5r:/etc/sensitivedata# ls
+password.txt  username.txt
+
+root@nginx-deploy-configma-56b88d579-mrp5r:/etc/sensitivedata# cat password.txt
+pa$$wOOrd
+
+root@nginx-deploy-configma-56b88d579-mrp5r:/etc/sensitivedata# cat username.txt
+mongodb_user
+
+or 
+
+how to check details without entering in to the containers
+
+	kubectl exec nginx-deploy-configma-56b88d579-mrp5r cat /etc/sensitivedata/username.txt -n vnd
+mongodb_user
+
+
+
+==========================Create secret using manually=====================
+	STEP1: Encrypt the data
+
+echo -n "redis_user" | base64       # base64 algorithm
+bW9uZ29kYl91c2Vy
+
+	echo -n "pa$$wOOrd" | base64
+cGE4MTR3T09yZA==
+
+	STEP2: create configmap yaml file:
+
+======================vi secret.yml=================
+
+apiVersion: v1
+kind: Secret
+metadata:
+ name: vnd-redis-secret                #name of secret
+ namespace: vnd 
+type: Opaque
+data:
+ username: bW9uZ29kYl91c2Vy            ###echo -n "redis_user" | base64
+ password: cGE4MTR3T09yZA==            ###echo -n "pa$$wOOrd" | base64
+
+ 
+check:
+kubectl apply -f secret.yml
+kubectl get secret -n vnd
+
+
+how to use secrets on yaml files						
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: redis-deploy-configma
+ namespace: vnd
+spec:
+ replicas: 1
+ selector:
+  matchLabels:
+   app: blue
+ template:
+  metadata:
+   name: redis-pod
+   labels:
+     app: blue
+  spec:
+   containers:
+    - name: redis-containers
+      image: redis
+      volumeMounts:
+      - name: test-vol
+        mountPath: "/etc/sensitivedata"
+        readOnly: true
+   volumes:
+    - name: test-vol
+      secret:
+       secretName: vnd-redis-secret
+   restartPolicy: Never
+------------------
+  
+check:
+/etc/sensitivedata
+ls
+password  username
+
+cat username
+mongodb_user
+
+cat password
+pa814wOOrd
+
+====================
+SECETS:
+
+2.Conusming secrets using environment variables
+
+apiVersion: v1
+kind: Secret
+metadata:
+ name: vnd-redis-secret                #name of secret
+ namespace: vnd 
+type: Opaque
+data:
+ username: bW9uZ29kYl91c2Vy            ###echo -n "redis_user" | base64
+ password: cGE4MTR3T09yZA==            ###echo -n "pa$$wOOrd" | base64
+ 
+ 
+Deployment:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: redis-deploy-configma
+ namespace: vnd
+spec:
+ replicas: 1
+ selector:
+  matchLabels:
+   app: blue
+ template:
+  metadata:
+   name: redis-pod
+   labels:
+     app: blue
+  spec:
+   containers:
+    - name: redis-containers
+      image: redis
+      env:
+       - name: SECRET_USERNAME           ## SECRET_USERNAME  == env varable of redis
+         valueFrom:
+          secretKeyRef:
+            name: vnd-redis-secret 
+            key: username
+       - name: SECRET_PASSWORD           ## SECRET_PASSWORD == env varable of redis
+         valueFrom:
+          secretKeyRef:
+            name: vnd-redis-secret 
+            key: password
+   restartPolicy: always
+==========================================  
+$ kubectl exec -it redis-deploy-configma-68576bd8bd-vqbdf -n vnd bash
+
+echo $SECRET_PASSWORD
+pa814wOOrd
+
+echo $SECRET_USERNAME
+mongodb_user
+
+or
+
+check without login to container:
+
+		$ kubectl exec redis-deploy-configma-68576bd8bd-vqbdf  -n vnd env |grep -i SECRET
+
+SECRET_USERNAME=mongodb_user
+SECRET_PASSWORD=pa814wOOrd
+
+If we encrypt the data then container decrypts it automatically
+
+===========================================
+hot to check env varailbles of redis
+
+kubectl exec redis-deploy-configma-68576bd8bd-vqbdf -n vnd env
+
+HOSTNAME=redis-deploy-configma-68576bd8bd-vqbdf
+SECRET_USERNAME=mongodb_user
+SECRET_PASSWORD=pa814wOOrd
+KUBERNETES_SERVICE_HOST=10.7.240.1
+KUBERNETES_SERVICE_PORT=443
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_PORT=tcp://10.7.240.1:443
+KUBERNETES_PORT_443_TCP=tcp://10.7.240.1:443
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBERNETES_PORT_443_TCP_PORT=443
+KUBERNETES_PORT_443_TCP_ADDR=10.7.240.1
+GOSU_VERSION=1.12
+REDIS_VERSION=6.0.9
+REDIS_DOWNLOAD_URL=http://download.redis.io/releases/redis-6.0.9.tar.gz
+REDIS_DOWNLOAD_SHA=dc2bdcf81c620e9f09cfd12e85d3bc631c897b2db7a55218fd8a65eaa37f86dd
+HOME=/root
+
